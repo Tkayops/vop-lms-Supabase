@@ -1,0 +1,449 @@
+import { useState, useMemo, useEffect } from "react";
+import { BarChart3, Users, Award, MapPin, Calendar, Download, TrendingUp, Filter } from "lucide-react";
+import { mockLearners, getLearnersByConference, getLearnersByChurch, getStatistics } from "../data/mockLearners";
+import { getConferences, getStations, getDistricts, getChurches } from "../services/api";
+
+export default function AdminDashboard() {
+  const [selectedConference, setSelectedConference] = useState("all");
+  const [selectedStation, setSelectedStation] = useState("all");
+  const [selectedDistrict, setSelectedDistrict] = useState("all");
+  const [selectedChurch, setSelectedChurch] = useState("all");
+  
+  // API data states
+  const [conferences, setConferences] = useState([]);
+  const [stations, setStations] = useState([]);
+  const [districts, setDistricts] = useState([]);
+  const [churches, setChurches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Fetch church hierarchy data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [confData, statData, distData, churchData] = await Promise.all([
+          getConferences(),
+          getStations(),
+          getDistricts(),
+          getChurches()
+        ]);
+        setConferences(confData || []);
+        setStations(statData || []);
+        setDistricts(distData || []);
+        setChurches(churchData || []);
+      } catch (err) {
+        console.error('Error fetching church data:', err);
+        setError('Failed to load church data. Using offline mode.');
+        // Fallback to empty arrays
+        setConferences([]);
+        setStations([]);
+        setDistricts([]);
+        setChurches([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  // Get filtered learners based on hierarchy selection
+  const filteredLearners = useMemo(() => {
+    if (selectedChurch !== "all") {
+      return getLearnersByChurch(selectedChurch);
+    } else if (selectedConference !== "all") {
+      return getLearnersByConference(selectedConference);
+    }
+    return mockLearners;
+  }, [selectedConference, selectedChurch]);
+
+  const stats = getStatistics(filteredLearners);
+
+  // Age distribution
+  const ageDistribution = useMemo(() => {
+    const ranges = [
+      { label: "18-25", min: 18, max: 25, count: 0 },
+      { label: "26-35", min: 26, max: 35, count: 0 },
+      { label: "36-45", min: 36, max: 45, count: 0 },
+      { label: "46-60", min: 46, max: 60, count: 0 },
+    ];
+    
+    filteredLearners.forEach(learner => {
+      const range = ranges.find(r => learner.age >= r.min && learner.age <= r.max);
+      if (range) range.count++;
+    });
+    
+    return ranges;
+  }, [filteredLearners]);
+
+  // County distribution (top 10)
+  const countyDistribution = useMemo(() => {
+    const countyMap = {};
+    filteredLearners.forEach(learner => {
+      countyMap[learner.county] = (countyMap[learner.county] || 0) + 1;
+    });
+    
+    return Object.entries(countyMap)
+      .map(([county, count]) => ({ county, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [filteredLearners]);
+
+  // Conference distribution
+  const conferenceDistribution = useMemo(() => {
+    const confMap = {};
+    filteredLearners.forEach(learner => {
+      confMap[learner.conferenceName] = (confMap[learner.conferenceName] || 0) + 1;
+    });
+    
+    return Object.entries(confMap)
+      .map(([conference, count]) => ({ conference, count }));
+  }, [filteredLearners]);
+
+  // Gender distribution
+  const genderDistribution = useMemo(() => {
+    const male = filteredLearners.filter(l => l.gender === "Male").length;
+    const female = filteredLearners.filter(l => l.gender === "Female").length;
+    return [
+      { gender: "Male", count: male, percentage: Math.round((male / (filteredLearners.length || 1)) * 100) },
+      { gender: "Female", count: female, percentage: Math.round((female / (filteredLearners.length || 1)) * 100) }
+    ];
+  }, [filteredLearners]);
+
+  // Get stations for selected conference
+  const availableStations = useMemo(() => {
+    if (selectedConference === "all") return [];
+    return stations.filter(s => s.conf_id === selectedConference && s.isactive === "1");
+  }, [selectedConference, stations]);
+
+  // Get districts for selected station
+  const availableDistricts = useMemo(() => {
+    if (selectedStation === "all") return [];
+    return districts.filter(d => d.station_id === selectedStation && d.isactive === "1");
+  }, [selectedStation, districts]);
+
+  // Get churches for selected district
+  const availableChurches = useMemo(() => {
+    if (selectedDistrict === "all") return [];
+    return churches.filter(c => c.district_id === selectedDistrict && c.isactive === "1");
+  }, [selectedDistrict, churches]);
+
+  const exportReport = () => {
+    const level = selectedChurch !== "all" ? "Church" : selectedDistrict !== "all" ? "District" : selectedStation !== "all" ? "Station" : selectedConference !== "all" ? "Conference" : "National";
+    const headers = ["Name", "Email", "Age", "Gender", "County", "Church", "Conference", "Course", "Progress", "Graduated", "Last Active"];
+    const rows = filteredLearners.map(l => [
+      l.fullName,
+      l.email,
+      l.age,
+      l.gender,
+      l.county,
+      l.churchName,
+      l.conferenceName,
+      l.enrolledCourse,
+      `${l.progress}%`,
+      l.graduated ? "Yes" : "No",
+      new Date(l.lastActive).toLocaleDateString()
+    ]);
+    
+    const csvContent = [headers, ...rows].map(row => row.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `VOP_${level}_Report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-orange-200 border-t-orange-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Loading church data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-white pb-12">
+      {/* Header */}
+      <header className="bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-lg">
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+              <p className="text-orange-100 mt-1">Voice Of Prophecy Virtual School - National Reports</p>
+              {error && (
+                <p className="text-orange-200 text-sm mt-1 flex items-center gap-2">
+                  <span className="bg-orange-500/30 px-2 py-1 rounded">⚠ {error}</span>
+                </p>
+              )}
+            </div>
+            <button
+              onClick={exportReport}
+              className="flex items-center gap-2 bg-white/20 backdrop-blur-sm hover:bg-white/30 px-6 py-3 rounded-xl transition-all font-semibold"
+            >
+              <Download size={20} />
+              Export Report
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        {/* Hierarchical Filters */}
+        <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="text-orange-600" size={24} />
+            <h2 className="text-xl font-bold text-gray-800">Filter by Church Hierarchy</h2>
+            <span className="ml-auto text-sm text-gray-500">
+              {conferences.length} Conferences · {stations.length} Stations · {districts.length} Districts · {churches.length} Churches
+            </span>
+          </div>
+          <div className="grid md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Conference Level</label>
+              <select
+                value={selectedConference}
+                onChange={(e) => {
+                  setSelectedConference(e.target.value);
+                  setSelectedStation("all");
+                  setSelectedDistrict("all");
+                  setSelectedChurch("all");
+                }}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none"
+              >
+                <option value="all">All Conferences</option>
+                {conferences.filter(c => c.isactive !== "0").map(conf => (
+                  <option key={conf.id} value={conf.id}>{conf.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Station Level</label>
+              <select
+                value={selectedStation}
+                onChange={(e) => {
+                  setSelectedStation(e.target.value);
+                  setSelectedDistrict("all");
+                  setSelectedChurch("all");
+                }}
+                disabled={selectedConference === "all"}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="all">All Stations</option>
+                {availableStations.map(station => (
+                  <option key={station.id} value={station.id}>{station.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">District Level</label>
+              <select
+                value={selectedDistrict}
+                onChange={(e) => {
+                  setSelectedDistrict(e.target.value);
+                  setSelectedChurch("all");
+                }}
+                disabled={selectedStation === "all"}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="all">All Districts</option>
+                {availableDistricts.map(district => (
+                  <option key={district.id} value={district.id}>{district.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Church Level</label>
+              <select
+                value={selectedChurch}
+                onChange={(e) => setSelectedChurch(e.target.value)}
+                disabled={selectedDistrict === "all"}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-orange-400 focus:ring-4 focus:ring-orange-100 transition-all outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="all">All Churches</option>
+                {availableChurches.map(church => (
+                  <option key={church.id} value={church.id}>{church.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Statistics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Total Learners</p>
+                <p className="text-4xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent mt-2">
+                  {stats.total}
+                </p>
+              </div>
+              <div className="w-14 h-14 bg-gradient-to-br from-orange-100 to-amber-100 rounded-xl flex items-center justify-center">
+                <Users className="text-orange-600" size={28} />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg border border-green-100 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Graduated</p>
+                <p className="text-4xl font-bold text-green-600 mt-2">{stats.graduated}</p>
+                <p className="text-xs text-gray-500 mt-1">{stats.graduationRate}% completion</p>
+              </div>
+              <div className="w-14 h-14 bg-gradient-to-br from-green-100 to-emerald-100 rounded-xl flex items-center justify-center">
+                <Award className="text-green-600" size={28} />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg border border-blue-100 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Active Learners</p>
+                <p className="text-4xl font-bold text-blue-600 mt-2">{stats.active}</p>
+                <p className="text-xs text-gray-500 mt-1">{stats.total > 0 ? Math.round((stats.active/stats.total)*100) : 0}% active rate</p>
+              </div>
+              <div className="w-14 h-14 bg-gradient-to-br from-blue-100 to-cyan-100 rounded-xl flex items-center justify-center">
+                <TrendingUp className="text-blue-600" size={28} />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg border border-purple-100 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Avg Progress</p>
+                <p className="text-4xl font-bold text-purple-600 mt-2">{stats.avgProgress}%</p>
+                <p className="text-xs text-gray-500 mt-1">Avg score: {stats.avgScore}%</p>
+              </div>
+              <div className="w-14 h-14 bg-gradient-to-br from-purple-100 to-pink-100 rounded-xl flex items-center justify-center">
+                <BarChart3 className="text-purple-600" size={28} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Age Distribution */}
+          <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <Calendar className="text-orange-600" size={24} />
+              <h2 className="text-xl font-bold text-gray-800">Age Distribution</h2>
+            </div>
+            <div className="space-y-4">
+              {ageDistribution.map((range, idx) => {
+                const percentage = stats.total > 0 ? Math.round((range.count / stats.total) * 100) : 0;
+                return (
+                  <div key={idx}>
+                    <div className="flex justify-between text-sm font-medium mb-2">
+                      <span className="text-gray-700">{range.label} years</span>
+                      <span className="text-gray-600">{range.count} ({percentage}%)</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3">
+                      <div
+                        className="bg-gradient-to-r from-orange-500 to-amber-500 h-3 rounded-full transition-all"
+                        style={{ width: `${percentage}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Gender Distribution */}
+          <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <Users className="text-orange-600" size={24} />
+              <h2 className="text-xl font-bold text-gray-800">Gender Distribution</h2>
+            </div>
+            <div className="space-y-6">
+              {genderDistribution.map((item, idx) => (
+                <div key={idx}>
+                  <div className="flex justify-between text-sm font-medium mb-2">
+                    <span className="text-gray-700">{item.gender}</span>
+                    <span className="text-gray-600">{item.count} ({item.percentage}%)</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className={`h-3 rounded-full transition-all ${
+                        item.gender === "Male"
+                          ? "bg-gradient-to-r from-blue-500 to-cyan-500"
+                          : "bg-gradient-to-r from-pink-500 to-purple-500"
+                      }`}
+                      style={{ width: `${item.percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Regional Distribution (Counties) */}
+        <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <MapPin className="text-orange-600" size={24} />
+            <h2 className="text-xl font-bold text-gray-800">Top 10 Counties by Learners</h2>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {countyDistribution.map((item, idx) => {
+              const percentage = stats.total > 0 ? Math.round((item.count / stats.total) * 100) : 0;
+              return (
+                <div key={idx} className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 border border-orange-200">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-gray-800">{idx + 1}. {item.county}</span>
+                    <span className="text-orange-600 font-bold">{item.count}</span>
+                  </div>
+                  <div className="w-full bg-orange-200 rounded-full h-2">
+                    <div
+                      className="bg-gradient-to-r from-orange-500 to-amber-500 h-2 rounded-full"
+                      style={{ width: `${Math.min(percentage * 2, 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Conference Distribution */}
+        <div className="bg-white rounded-2xl shadow-lg border border-orange-100 p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <BarChart3 className="text-orange-600" size={24} />
+            <h2 className="text-xl font-bold text-gray-800">Distribution by Conference</h2>
+          </div>
+          <div className="space-y-4">
+            {conferenceDistribution.map((item, idx) => {
+              const percentage = stats.total > 0 ? Math.round((item.count / stats.total) * 100) : 0;
+              return (
+                <div key={idx}>
+                  <div className="flex justify-between text-sm font-medium mb-2">
+                    <span className="text-gray-700">{item.conference}</span>
+                    <span className="text-gray-600">{item.count} learners ({percentage}%)</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className="bg-gradient-to-r from-orange-500 to-amber-500 h-3 rounded-full transition-all"
+                      style={{ width: `${percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
