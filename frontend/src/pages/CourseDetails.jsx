@@ -1,181 +1,153 @@
-// src/pages/CourseDetails.jsx
-import { useParams, Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
-import { BookOpen, ArrowLeft, PlayCircle, Clock, CheckCircle } from "lucide-react";
+import { listLessonsByCourse, listCourses, ensurePublicCourses } from "../services/db";
+import { PUBLIC_COURSES } from "../data/publicCourses.manifest";
+import { BookOpen, ArrowLeft, Play } from "lucide-react";
+
+function Card({ className = "", children }) {
+  return (
+    <div className={["rounded-3xl border border-black/5 bg-white shadow-[0_1px_0_rgba(0,0,0,0.03),0_8px_30px_rgba(0,0,0,0.04)] p-5", className].join(" ")}>
+      {children}
+    </div>
+  );
+}
 
 export default function CourseDetails() {
-  const { courseId } = useParams();
+  const { courseId: courseIdParam } = useParams();
+  const navigate = useNavigate();
+  const courseId = Number(courseIdParam);
 
-  const courseData = {
-    discover: {
-      title: "Discover",
-      description: "A comprehensive 26-lesson journey through Bible foundations and prophecy. Learn about God's love, salvation, and the amazing truths revealed in Scripture.",
-      lessons: 26,
-      duration: "13 weeks",
-      level: "Beginner",
-      color: "from-orange-500 to-amber-500"
-    },
-    ugunduzi: {
-      title: "Ugunduzi",
-      description: "Discover Swahili lessons covering 26 topics of faith and discovery. Perfect for Swahili-speaking learners in Kenya.",
-      lessons: 26,
-      duration: "13 weeks",
-      level: "Beginner",
-      color: "from-emerald-500 to-teal-500"
-    },
-    "daniel-revelation": {
-      title: "Daniel & Revelation",
-      description: "Dive into the prophetic books with 21 in-depth lessons full of insight into God's plan for humanity.",
-      lessons: 21,
-      duration: "11 weeks",
-      level: "Intermediate",
-      color: "from-purple-500 to-indigo-500"
-    },
-    health: {
-      title: "Health",
-      description: "Learn about physical and spiritual wellness through 20 structured lessons on biblical health principles.",
-      lessons: 20,
-      duration: "10 weeks",
-      level: "Beginner",
-      color: "from-blue-500 to-cyan-500"
-    },
-    family: {
-      title: "Focus on the Family",
-      description: "Discover biblical principles for healthy, faith-filled family relationships through 16 practical lessons.",
-      lessons: 16,
-      duration: "8 weeks",
-      level: "All Levels",
-      color: "from-pink-500 to-rose-500"
+  const [loading, setLoading] = useState(true);
+  const [course, setCourse] = useState(null);
+  const [lessons, setLessons] = useState([]);
+  const [problem, setProblem] = useState(null);
+
+  useEffect(() => {
+    if (!Number.isFinite(courseId) || courseId <= 0) {
+      navigate("/courses");
+      return;
+    }
+
+    async function load() {
+      try {
+        setLoading(true);
+        setProblem(null);
+
+        const [courses, lessonList] = await Promise.all([
+          listCourses(),
+          listLessonsByCourse(courseId),
+        ]);
+
+        const c = (courses || []).find((k) => Number(k.id) === courseId) || null;
+        setCourse(c);
+
+        let list = (lessonList || [])
+          .filter((l) => Number.isFinite(Number(l.lesson_number)))
+          .sort((a, b) => Number(a.lesson_number) - Number(b.lesson_number));
+
+        if ((!list || list.length === 0) && c?.title) {
+          try {
+            await ensurePublicCourses(PUBLIC_COURSES);
+            const after = await listLessonsByCourse(courseId);
+            list = (after || [])
+              .filter((l) => Number.isFinite(Number(l.lesson_number)))
+              .sort((a, b) => Number(a.lesson_number) - Number(b.lesson_number));
+          } catch {}
+        }
+
+        setLessons(list);
+      } catch (e) {
+        setProblem(e?.message || "Failed to load course.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [courseId, navigate]);
+
+  const firstLessonNum = useMemo(
+    () => (lessons.length ? Number(lessons[0].lesson_number) : null),
+    [lessons]
+  );
+
+  const handleStart = () => {
+    if (firstLessonNum != null) {
+      // ✅ matches App.js: /courses/:courseId/lessons/:lessonId
+      navigate(`/courses/${courseId}/lessons/${firstLessonNum}`);
     }
   };
 
-  const course = courseData[courseId] || {
-    title: courseId.replace("-", " "),
-    description: "Course details coming soon.",
-    lessons: 0,
-    duration: "TBA",
-    level: "TBA",
-    color: "from-orange-500 to-amber-500"
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-orange-50 flex flex-col">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_60%,#ffffff_100%)]">
       <Navbar />
 
-      <div className="pt-28 px-6 flex-grow">
-        <div className="max-w-5xl mx-auto">
-          {/* Back Button */}
-          <Link
-            to="/courses"
-            className="inline-flex items-center gap-2 text-orange-600 hover:text-orange-700 font-semibold mb-8 group"
-          >
-            <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
-            Back to Courses
+      <main className="max-w-6xl mx-auto px-4 py-6 md:py-10">
+        <div className="mb-4 flex items-center justify-between">
+          {/* ✅ Back to /courses */}
+          <Link to="/courses" className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100">
+            <ArrowLeft className="w-4 h-4" /> Back to courses
           </Link>
 
-          {/* Course Header Card */}
-          <div className={`bg-gradient-to-r ${course.color} rounded-3xl shadow-2xl p-10 md:p-12 text-white mb-10`}>
-            <div className="flex items-start justify-between mb-6">
-              <div className="bg-white/20 backdrop-blur-sm p-4 rounded-2xl">
-                <BookOpen size={40} />
-              </div>
-              <span className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-semibold">
-                {course.level}
-              </span>
-            </div>
-            <h1 className="text-4xl md:text-5xl font-black mb-4">{course.title}</h1>
-            <p className="text-lg md:text-xl text-white/90 leading-relaxed max-w-3xl">
-              {course.description}
-            </p>
-          </div>
-
-          {/* Course Info Grid */}
-          <div className="grid md:grid-cols-3 gap-6 mb-10">
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-2 border-orange-100">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="bg-orange-100 p-2 rounded-lg">
-                  <BookOpen size={24} className="text-orange-600" />
-                </div>
-                <h3 className="font-bold text-gray-700">Lessons</h3>
-              </div>
-              <p className="text-3xl font-black bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
-                {course.lessons}
-              </p>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-2 border-orange-100">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="bg-orange-100 p-2 rounded-lg">
-                  <Clock size={24} className="text-orange-600" />
-                </div>
-                <h3 className="font-bold text-gray-700">Duration</h3>
-              </div>
-              <p className="text-3xl font-black bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
-                {course.duration}
-              </p>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-lg p-6 border-2 border-orange-100">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="bg-orange-100 p-2 rounded-lg">
-                  <CheckCircle size={24} className="text-orange-600" />
-                </div>
-                <h3 className="font-bold text-gray-700">Completion</h3>
-              </div>
-              <p className="text-3xl font-black bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
-                0%
-              </p>
-            </div>
-          </div>
-
-          {/* Course Content Section */}
-          <div className="bg-white rounded-3xl shadow-xl p-8 md:p-10 border-2 border-orange-100">
-            <h2 className="text-2xl font-black text-gray-900 mb-6">Course Overview</h2>
-            <p className="text-gray-600 leading-relaxed mb-8">
-              Welcome to the <strong>{course.title}</strong> course! This comprehensive program is designed to help you grow spiritually
-              and gain a deeper understanding of God's Word. Each lesson builds on the previous one, creating a structured learning path
-              that will enrich your faith journey.
-            </p>
-
-            {courseId === "discover" ? (
-              <Link
-                to={`/courses/${courseId}/lessons/1`}
-                className="inline-flex items-center gap-3 bg-gradient-to-r from-orange-600 to-amber-600 text-white px-8 py-4 rounded-2xl hover:shadow-2xl transition-all duration-300 font-bold text-lg group"
-              >
-                <PlayCircle size={24} className="group-hover:scale-110 transition-transform" />
-                Start Learning Now
-              </Link>
-            ) : (
-              <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-2 flex items-center border-orange-200 rounded-2xl p-6">
-                <p className="text-orange-700 font-semibold text-center">
-                  📚 Lessons for this course will be available soon! Stay tuned.
-                </p>
-
-                <Link
-                  to={`/courses/${courseId}/lessons/1`}
-                  className="inline-flex mx-auto items-center gap-3 bg-gradient-to-r from-orange-600 to-amber-600 text-white px-8 py-4 rounded-2xl hover:shadow-2xl transition-all duration-300 font-bold text-lg group"
-                >
-                  <PlayCircle size={24} className="group-hover:scale-110 transition-transform" />
-                  Preview Lessons
-                </Link>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={handleStart}
+            disabled={firstLessonNum == null}
+            className="inline-flex items-center gap-2 rounded-xl bg-black text-white px-3 py-1.5 text-sm hover:opacity-90 disabled:opacity-40"
+            title={firstLessonNum == null ? "No lessons yet" : "Start course"}
+          >
+            <Play className="w-4 h-4" />
+            Start course
+          </button>
         </div>
-      </div>
 
-      {/* Footer */}
-      <footer className="text-center py-10 text-gray-600 text-sm mt-16 border-t-2 border-orange-100 bg-white">
-        <p className="font-semibold text-gray-700">
-          © {new Date().getFullYear()} <span className="bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent font-bold">Voice Of Prophecy Virtual School</span>
-        </p>
-        <p className="mt-2 text-gray-500">
-          Powered by{" "}
-          <span className="bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent font-semibold">
-            Kellzman Tech Ltd
-          </span>
-        </p>
-      </footer>
+        <div className="mb-4">
+          <h1 className="text-2xl font-semibold">{course?.title || `Course #${courseId}`}</h1>
+          {course?.description ? (
+            <p className="text-sm text-black/60 mt-1">{course.description}</p>
+          ) : null}
+        </div>
+
+        {problem ? (
+          <Card><div className="text-sm text-red-700">{problem}</div></Card>
+        ) : loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-pulse">
+            <Card className="h-24" /><Card className="h-24" /><Card className="h-24" /><Card className="h-24" />
+          </div>
+        ) : lessons?.length ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {lessons.map((l) => {
+              const lessonId = Number(l.lesson_number);
+              if (!Number.isFinite(lessonId)) return null;
+              return (
+                <Card key={l.id} className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-grid place-items-center w-8 h-8 rounded-xl bg-black/5">
+                      <BookOpen className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <div className="font-medium">Lesson {lessonId}</div>
+                      <div className="text-sm text-black/60">{l.title}</div>
+                      <div className="text-xs text-black/50 mt-1">
+                        {l.content_url ? "File linked" : "No file on record (viewer will try fallback)"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ✅ Link to viewer using :courseId and :lessonId */}
+                  <Link
+                    to={`/courses/${courseId}/lessons/${lessonId}`}
+                    className="text-sm font-medium opacity-80 hover:opacity-100"
+                  >
+                    Open
+                  </Link>
+                </Card>
+              );
+            })}
+          </div>
+        ) : (
+          <Card>No lessons found for this course.</Card>
+        )}
+      </main>
     </div>
   );
 }

@@ -1,25 +1,33 @@
-// src/pages/Courses.jsx
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
-import { BookOpen, Clock, CheckCircle2, Lock } from "lucide-react";
-import { listCourses } from "../services/db";
-import { useNavigate } from "react-router-dom";
+import { listCourses, ensurePublicCourses } from "../services/db";
+import { PUBLIC_COURSES } from "../data/publicCourses.manifest";
+import { BookOpen } from "lucide-react";
+
+function Card({ className = "", children }) {
+  return (
+    <div className={["rounded-3xl border border-black/5 bg-white shadow-[0_1px_0_rgba(0,0,0,0.03),0_8px_30px_rgba(0,0,0,0.04)] p-5", className].join(" ")}>
+      {children}
+    </div>
+  );
+}
 
 export default function Courses() {
-  const navigate = useNavigate();
-  const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
+  const [courses, setCourses] = useState([]);
+  const [problem, setProblem] = useState(null);
 
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-        const rows = await listCourses();
-        setCourses(rows || []);
+        setProblem(null);
+        try { await ensurePublicCourses(PUBLIC_COURSES); } catch {}
+        const data = await listCourses();
+        setCourses((data || []).filter(c => Number.isFinite(Number(c.id))));
       } catch (e) {
-        console.error(e);
-        setErr("Failed to load courses.");
+        setProblem(e?.message || "Failed to load courses.");
       } finally {
         setLoading(false);
       }
@@ -27,32 +35,47 @@ export default function Courses() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_60%,#ffffff_100%)]">
       <Navbar />
-      <section className="max-w-6xl mx-auto px-4 py-10">
-        <h1 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-2"><BookOpen /> Courses</h1>
-        {loading && <p>Loading…</p>}
-        {err && <p className="text-red-600">{err}</p>}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {courses.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => navigate(`/courses/${c.id}`)}
-              className="text-left border rounded-2xl p-5 hover:shadow-md transition bg-white"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-semibold">{c.title}</h3>
-                <Lock className="text-gray-300" />
-              </div>
-              <p className="text-gray-600 mt-2 line-clamp-3">{c.description || "—"}</p>
-              <div className="mt-4 flex items-center gap-3 text-sm text-gray-500">
-                <Clock size={16} /> {c.total_lessons ?? 0} lessons
-                <CheckCircle2 size={16} className="ml-auto" />
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
+      <main className="max-w-7xl mx-auto px-4 py-6 md:py-10">
+        <h1 className="text-2xl font-semibold mb-4">Courses</h1>
+
+        {problem ? (
+          <Card><div className="text-sm text-red-700">{problem}</div></Card>
+        ) : loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
+            <Card className="h-28" /><Card className="h-28" /><Card className="h-28" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {(courses || []).map((c) => {
+              const courseId = Number(c.id);
+              if (!Number.isFinite(courseId)) return null;
+              return (
+                <Card key={courseId} className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-grid place-items-center w-9 h-9 rounded-xl bg-black/5">
+                      <BookOpen className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <div className="font-medium">{c.title}</div>
+                      {c.description ? <div className="text-sm text-black/60">{c.description}</div> : null}
+                    </div>
+                  </div>
+
+                  {/* ✅ Link to details page per App.js */}
+                  <Link
+                    to={`/courses/${courseId}`}
+                    className="text-sm font-medium opacity-80 hover:opacity-100 rounded-xl border border-black/10 px-3 py-1.5"
+                  >
+                    View lessons
+                  </Link>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </main>
     </div>
   );
 }

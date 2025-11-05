@@ -1,108 +1,229 @@
-// src/pages/LessonViewer.jsx
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, CheckCircle, ChevronRight, Award, Clock } from "lucide-react";
-import { listLessonsByCourse, getUserByClerkId, markLessonComplete } from "../services/db";
-import { useAuth } from "@clerk/clerk-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import Navbar from "../components/Navbar";
+import { useUser } from "@clerk/clerk-react";
+import {
+  listLessonsByCourse,
+  listCourses,
+  markLessonComplete,
+  getUserByClerkId,
+} from "../services/db";
+import { ArrowLeft, ChevronLeft, ChevronRight, CheckCircle2 } from "lucide-react";
+
+function Card({ className = "", children }) {
+  return (
+    <div className={["rounded-3xl border border-black/5 bg-white shadow-[0_1px_0_rgba(0,0,0,0.03),0_8px_30px_rgba(0,0,0,0.04)]", className].join(" ")}>
+      {children}
+    </div>
+  );
+}
+
+function fallbackUrl(courseTitle, n) {
+  const t = (courseTitle || "").toLowerCase();
+  if (t === "discover") return `/lessons/discover/lesson${n}.htm`;
+  if (t === "ugunduzi") return `/lessons/ugunduzi/lesson${n}.htm`;
+  return null;
+}
 
 export default function LessonViewer() {
-  const { courseId } = useParams();
+  // ✅ Match App.js params
+  const { courseId: courseIdParam, lessonId: lessonIdParam } = useParams();
   const navigate = useNavigate();
-  const { userId } = useAuth();
-  const [userRow, setUserRow] = useState(null);
 
+  const courseId = Number(courseIdParam);
+  const currentNum = Number(lessonIdParam);
+
+  const { user, isLoaded } = useUser();
+
+  const [loading, setLoading] = useState(true);
+  const [course, setCourse] = useState(null);
   const [lessons, setLessons] = useState([]);
-  const [current, setCurrent] = useState(1);
-  const [isSaving, setIsSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  const currentLesson = useMemo(() => lessons.find(l => l.lesson_number === current), [lessons, current]);
+  const [profile, setProfile] = useState(null);
+  const [problem, setProblem] = useState(null);
+  const [completeMsg, setCompleteMsg] = useState("");
 
   useEffect(() => {
-    (async () => {
-      try {
-        setErr("");
-        // fetch learner row
-        const u = await getUserByClerkId(userId);
-        setUserRow(u);
-        // get lessons
-        const l = await listLessonsByCourse(Number(courseId));
-        setLessons(l || []);
-        if (l?.length) setCurrent(l[0].lesson_number);
-      } catch (e) {
-        console.error(e);
-        setErr("Failed to load lesson.");
-      }
-    })();
-  }, [courseId, userId]);
+    if (!Number.isFinite(courseId) || courseId <= 0) navigate("/courses");
+  }, [courseId, navigate]);
 
-  async function completeCurrent() {
-    if (!userRow || !currentLesson) return;
+  useEffect(() => {
+    async function load() {
+      try {
+        setLoading(true);
+        setProblem(null);
+
+        const [courses, lessonList] = await Promise.all([
+          listCourses(),
+          listLessonsByCourse(courseId),
+        ]);
+
+        const c = (courses || []).find((k) => Number(k.id) === courseId) || null;
+        setCourse(c);
+
+        const sorted = (lessonList || [])
+          .filter((l) => Number.isFinite(Number(l.lesson_number)))
+          .sort((a, b) => Number(a.lesson_number) - Number(b.lesson_number));
+        setLessons(sorted);
+
+        if (isLoaded && user?.id) {
+          try {
+            const p = await getUserByClerkId(user.id);
+            setProfile(p || null);
+          } catch {
+            setProfile(null);
+          }
+        }
+
+        if ((!Number.isFinite(currentNum) || currentNum <= 0) && sorted.length) {
+          navigate(`/courses/${courseId}/lessons/${sorted[0].lesson_number}`, { replace: true });
+        }
+      } catch (e) {
+        setProblem(e?.message || "Failed to load lesson.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [courseId, currentNum, isLoaded, user, navigate]);
+
+  const currentLesson = useMemo(
+    () => lessons.find((l) => Number(l.lesson_number) === currentNum),
+    [lessons, currentNum]
+  );
+
+  const total = lessons.length;
+  const idx = useMemo(
+    () => (total ? lessons.findIndex((l) => Number(l.lesson_number) === currentNum) : -1),
+    [lessons, currentNum, total]
+  );
+
+  const prevNumber = idx > 0 ? Number(lessons[idx - 1].lesson_number) : null;
+  const nextNumber = idx >= 0 && idx < total - 1 ? Number(lessons[idx + 1].lesson_number) : null;
+
+  const displayUrl =
+    currentLesson?.content_url ||
+    (Number.isFinite(currentNum) ? fallbackUrl(course?.title, currentNum) : null);
+
+  async function handleComplete() {
+    const uid = Number(profile?.id);
+    const lid = Number(currentLesson?.id);
+    if (!Number.isFinite(uid) || !Number.isFinite(lid)) {
+      setCompleteMsg("Cannot mark complete: invalid user or lesson id.");
+      setTimeout(() => setCompleteMsg(""), 3000);
+      return;
+    }
+
     try {
-      setIsSaving(true);
-      await markLessonComplete({ userId: userRow.id, lessonId: currentLesson.id });
+      await markLessonComplete({ userId: uid, lessonId: lid });
+      setCompleteMsg("Marked complete ✓");
+      setTimeout(() => setCompleteMsg(""), 2500);
     } catch (e) {
-      console.error(e);
-      setErr("Could not mark complete.");
-    } finally {
-      setIsSaving(false);
+      setCompleteMsg(e?.message || "Failed to mark complete");
+      setTimeout(() => setCompleteMsg(""), 3000);
     }
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="flex items-center gap-3 p-4 border-b bg-white">
-        <button onClick={() => navigate(-1)} className="btn-secondary"><ArrowLeft size={16}/>Back</button>
-        <h1 className="text-xl font-semibold">Course #{courseId} • Lesson {current}</h1>
-      </header>
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_60%,#ffffff_100%)]">
+      <Navbar />
 
-      <main className="max-w-6xl mx-auto p-4 grid md:grid-cols-5 gap-6">
-        <aside className="md:col-span-2 border rounded-2xl p-3">
-          <h3 className="font-semibold mb-2">Lessons</h3>
-          <div className="grid gap-1">
-            {lessons.map((l) => (
-              <button key={l.id} onClick={() => setCurrent(l.lesson_number)} className={`flex items-center gap-2 p-2 rounded-lg border ${current === l.lesson_number ? "bg-orange-50 border-orange-200" : "bg-white"}`}>
-                <span className="w-7 h-7 flex items-center justify-center rounded-md bg-gray-100">{l.lesson_number}</span>
-                <span className="truncate">{l.title}</span>
-                <ChevronRight className="ml-auto text-gray-400" size={16}/>
+      <main className="max-w-7xl mx-auto px-4 py-6 md:py-10">
+        <div className="mb-4 flex items-center justify-between">
+          {/* ✅ Back to details page for this course */}
+          <Link to={`/courses/${courseId}`} className="inline-flex items-center gap-2 text-sm opacity-80 hover:opacity-100">
+            <ArrowLeft className="w-4 h-4" /> Back to course
+          </Link>
+
+          <div className="flex items-center gap-2">
+            {prevNumber != null && (
+              <button
+                onClick={() => navigate(`/courses/${courseId}/lessons/${prevNumber}`)}
+                className="inline-flex items-center gap-1 rounded-xl border border-black/10 px-3 py-1.5 text-sm hover:bg-black/5"
+                title="Previous lesson"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Prev
               </button>
-            ))}
+            )}
+            {nextNumber != null && (
+              <button
+                onClick={() => navigate(`/courses/${courseId}/lessons/${nextNumber}`)}
+                className="inline-flex items-center gap-1 rounded-xl border border-black/10 px-3 py-1.5 text-sm hover:bg-black/5"
+                title="Next lesson"
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
-        </aside>
+        </div>
 
-        <section className="md:col-span-3 border rounded-2xl p-4">
-          {!currentLesson ? (
-            <p className="text-gray-600">{err || "No lesson selected."}</p>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold">{currentLesson.title}</h2>
-                <span className="text-sm text-gray-500 flex items-center gap-1"><Clock size={16}/> {currentLesson.duration ?? 0} min</span>
-              </div>
-              <hr className="my-3"/>
-              {currentLesson.file_path ? (
-                <iframe title="lesson" src={currentLesson.file_path} className="w-full h-[60vh] border rounded-lg" />
-              ) : (
-                <p className="text-gray-600">No lesson file provided yet.</p>
-              )}
+        <div className="mb-4">
+          <h1 className="text-2xl font-semibold">
+            {course?.title || `Course #${courseId}`} — Lesson {Number.isFinite(currentNum) ? currentNum : "?"}
+          </h1>
+          <div className="text-sm text-black/60 mt-1">
+            {idx >= 0 ? `Lesson ${idx + 1} of ${total}` : null}
+          </div>
+        </div>
 
-              <div className="mt-4 flex items-center justify-between">
-                <button onClick={completeCurrent} disabled={isSaving} className="btn-primary">
-                  {isSaving ? "Saving..." : "Mark complete"} <CheckCircle size={16}/>
-                </button>
-                <button className="btn-secondary">
-                  Take Test <Award size={16}/>
+        {problem ? (
+          <Card className="p-5"><div className="text-sm text-red-700">{problem}</div></Card>
+        ) : loading ? (
+          <div className="grid gap-4 animate-pulse">
+            <Card className="h-10" />
+            <Card className="h-[70vh]" />
+          </div>
+        ) : !currentLesson ? (
+          <Card className="p-5">Could not find lesson {currentNum} for this course.</Card>
+        ) : displayUrl ? (
+          <>
+            <Card className="p-3 mb-4 flex items-center justify-between">
+              <div className="text-sm">
+                <span className="font-medium">Lesson {currentLesson.lesson_number}:</span>{" "}
+                {currentLesson.title}
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={displayUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-xl border border-black/10 px-3 py-1.5 text-sm hover:bg-black/5"
+                >
+                  Open in new tab
+                </a>
+                <button
+                  onClick={handleComplete}
+                  className="inline-flex items-center gap-1 rounded-xl bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Mark complete
                 </button>
               </div>
-            </>
-          )}
-        </section>
+            </Card>
+
+            <Card className="overflow-hidden">
+              <iframe
+                title={`Lesson ${currentLesson.lesson_number}`}
+                src={displayUrl}
+                className="w-full h-[72vh] border-0"
+              />
+            </Card>
+
+            {completeMsg ? (
+              <div className="mt-3 text-sm text-black/70">{completeMsg}</div>
+            ) : null}
+          </>
+        ) : (
+          <Card className="p-5">
+            We couldn’t find a file for this lesson.
+            <div className="text-sm text-black/60 mt-1">
+              Ensure the file exists at <code>/public/lessons/&lt;discover|ugunduzi&gt;/lesson{currentNum}.htm</code>
+              or set <code>content_url</code> in the database.
+            </div>
+          </Card>
+        )}
       </main>
-
-      <style>{`
-        .btn-primary { display:flex; align-items:center; gap:8px; background:#ea580c; color:#fff; padding:0.6rem 1rem; border-radius:0.75rem; }
-        .btn-secondary { display:flex; align-items:center; gap:8px; border:1px solid #e5e7eb; padding:0.6rem 1rem; border-radius:0.75rem; }
-      `}</style>
     </div>
   );
 }
